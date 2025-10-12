@@ -81,7 +81,6 @@ services:
 - `SMTP_USERNAME`: Usuário para autenticação SMTP. Para Gmail, use o e-mail ou um app-specific username.
 - `SMTP_PASSWORD`: Senha ou app password (necessário para contas com autenticação de dois fatores).
 - `SERVER_HOSTNAME`: Nome do host (FQDN) usado pelo Exim para qualificar domínios. Exemplo: `mail.suaempresa.com`.
-- `SMTP_DELAY_SECONDS`: Intervalo em segundos entre tentativas de entrega de e-mails na fila do Exim (padrão: 30).
 - `TZ`: Fuso horário do contêiner, para timestamps corretos nos logs (ex.: `America/Sao_Paulo`).
 - `DECODE_SUBJECT`: Ativa o script `decode_log.py` para decodificar assuntos MIME/octais nos logs (`yes` para ativar, `no` para desativar).
 - `DECODE_DEBUG`: Ativa logs detalhados no `decode_log.py` (`yes` para exibir detalhes no `/var/log/exim4/decode_errors.log`).
