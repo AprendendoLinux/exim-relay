@@ -61,7 +61,7 @@ fi
 # Gerar configuração do Exim
 update-exim4.conf --verbose
 
-echo "✅ Exim configuration generated"
+echo "Exim configuration generated"
 
 # Logs
 mkdir -p /var/log/exim4
