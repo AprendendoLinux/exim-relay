@@ -10,8 +10,8 @@ def debug(*args):
     if DECODE_DEBUG:
         print(*args, file=sys.stderr)
 
-# Padrão para identificar linhas de entrega (contendo =>)
-delivery_pattern = re.compile(r'\s+=>\s+')
+# Padrão para identificar linhas de entrega (contendo =>) ou conclusão (contendo Completed)
+delivery_pattern = re.compile(r'\s+=>\s+|Completed')
 
 def main():
     debug("Starting decode_log.py")
@@ -19,11 +19,11 @@ def main():
         for line in sys.stdin:
             debug(f"Received line: {line.strip()}")
             try:
-                # Verificar se a linha é uma linha de entrega (contém =>)
+                # Verificar se a linha é uma linha de entrega (contém =>) ou conclusão (contém Completed)
                 if delivery_pattern.search(line):
                     sys.stdout.write(line)
                 else:
-                    debug("Line skipped (not a delivery line)")
+                    debug("Line skipped (not a delivery or completion line)")
                 sys.stdout.flush()
             except Exception as e:
                 debug(f"Error processing line: {e}")
