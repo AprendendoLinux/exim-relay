@@ -13,10 +13,28 @@ import fcntl  # Para lock de arquivo simples
 LOG_DIR = "/var/log/exim4"
 LOG_FILE = os.path.join(LOG_DIR, "full_subjects.log")
 SEEN_IDS_FILE = os.path.join(LOG_DIR, ".seen_message_ids")  # Arquivo para deduplicação
+DEBUG_LOG = os.path.join(LOG_DIR, "decode_errors.log")
+
+# Variável de debug
+DECODE_DEBUG = os.environ.get("DECODE_DEBUG", "").lower() in ("1", "yes", "true")
 
 IPV4_RE = re.compile(r'\b(\d{1,3}(?:\.\d{1,3}){3})\b')
-# tenta extrair host a partir de "from <host> (" ou "from <host> "
-HOST_FROM_RE = re.compile(r'from\s+([^\\s\\(\\;]+)', re.IGNORECASE)
+# Tenta extrair host de vários padrões: "from <host>", "H=(<host>)", "helo=<host>", "EHLO <host>", "by <server> from <host>"
+HOST_FROM_RE = re.compile(
+    r'(?:from\s+([^\s\(\;]+)|H=\(([^)]+)\)|helo=([^\s;]+)|EHLO\s+([^\s;]+)|by\s+[^\s]+\s+from\s+([^\s;]+))',
+    re.IGNORECASE
+)
+
+def debug(*args):
+    """Escreve mensagens de debug no arquivo de log e, se DECODE_DEBUG, no stderr."""
+    log_message = ' '.join(str(arg) for arg in args)
+    try:
+        with open(DEBUG_LOG, 'a') as f:
+            f.write(f"[{datetime.datetime.now().isoformat()}] {log_message}\n")
+        if DECODE_DEBUG:
+            print(log_message, file=sys.stderr)
+    except Exception as e:
+        print(f"Erro ao escrever debug: {e}", file=sys.stderr)
 
 def decode_subject(subject):
     """Decodifica o cabeçalho Subject, lidando com múltiplas partes codificadas."""
@@ -29,6 +47,17 @@ def decode_subject(subject):
             decoded_subject += part
     return decoded_subject.strip().replace('\n', ' ')
 
+def extract_domain_from_email(email_addr):
+    """Extrai o domínio de um endereço de e-mail como fallback."""
+    try:
+        parsed = email.utils.parseaddr(email_addr)[1]  # Pega apenas o endereço
+        domain = parsed.split('@')[-1] if '@' in parsed else None
+        if domain and not IPV4_RE.match(domain):
+            return domain
+    except Exception as e:
+        debug(f"Erro ao extrair domínio de {email_addr}: {e}")
+    return None
+
 def parse_received_for_origin(msg):
     """
     Tenta extrair host e IP de origem a partir dos headers 'Received'.
@@ -37,33 +66,29 @@ def parse_received_for_origin(msg):
     """
     received_headers = msg.get_all('Received', [])
     if not received_headers:
+        debug("Nenhum cabeçalho Received encontrado")
         return None, None
 
-    # normalmente a pilha de Received vai do mais recente ao mais antigo na ordem do cabeçalho
-    # o remetente original costuma estar no último Received -> iteramos de trás pra frente
     for header in reversed(received_headers):
-        # <header> = header.replace('\n', ' ')  # Evita quebras
-        # procura IP
+        header = header.replace('\n', ' ')  # Evita quebras
+        debug(f"Analisando Received: {header}")
         ip_match = IPV4_RE.search(header)
         host_match = HOST_FROM_RE.search(header)
         ip = ip_match.group(1) if ip_match else None
         host = None
         if host_match:
-            host_candidate = host_match.group(1).strip()
-            # algumas vezes o campo 'from' vem com '[ip]' ou com parênteses; limpe caracteres extras
-            host_candidate = host_candidate.strip('[];(),')
-            # se host é um IP, ignore como host (vamos usar como ip)
-            if IPV4_RE.match(host_candidate):
-                # host candidate é ip — se ainda não temos ip, use
-                if not ip:
-                    ip = host_candidate
-            else:
-                host = host_candidate
+            # Captura o primeiro grupo não nulo: from, H=, helo=, EHLO, ou by...from
+            host_candidate = next((g for g in host_match.groups() if g), None)
+            if host_candidate:
+                host_candidate = host_candidate.strip('[];(),')
+                if not IPV4_RE.match(host_candidate):
+                    host = host_candidate
+                    debug(f"Host encontrado: {host}")
 
-        # se encontramos algo útil, retorne
         if host or ip:
             return host, ip
 
+    debug("Nenhum host válido encontrado nos cabeçalhos Received")
     return None, None
 
 def get_env_origin():
@@ -88,17 +113,15 @@ def get_env_origin():
         val = os.environ.get(v)
         if val:
             host = val.strip().replace('\n', ' ')
+            debug(f"Host encontrado em variável de ambiente {v}: {host}")
             break
 
     for v in env_vars_ip:
         val = os.environ.get(v)
         if val:
-            # normalize: pode vir com colchetes
             ip_match = IPV4_RE.search(val)
-            if ip_match:
-                ip = ip_match.group(1)
-            else:
-                ip = val.strip().replace('\n', ' ')
+            ip = ip_match.group(1) if ip_match else val.strip().replace('\n', ' ')
+            debug(f"IP encontrado em variável de ambiente {v}: {ip}")
             break
 
     return host, ip
@@ -114,12 +137,12 @@ def is_already_logged(message_id):
             f.seek(0)
             seen_ids = f.read().splitlines()
             if message_id in seen_ids:
+                debug(f"Duplicata detectada para Message-ID: {message_id}")
                 return True
             f.write(message_id + '\n')
             return False
     except Exception as e:
-        # Falha no lock: logar de qualquer forma, mas avisar
-        print(f"Erro no dedup: {e}", file=sys.stderr)
+        debug(f"Erro no dedup: {e}")
         return False
 
 def main():
@@ -129,7 +152,7 @@ def main():
         print(f"Duplicata ignorada para {message_id}", file=sys.stderr)
         return  # Sai sem logar novamente
 
-    # Ler o e-mailมีความ da entrada padrão
+    # Ler o e-mail da entrada padrão
     msg = email.message_from_file(sys.stdin)
 
     # Extrair o Subject completo
@@ -144,7 +167,6 @@ def main():
     to_headers = msg.get_all('To', []) + msg.get_all('Cc', [])
     all_to_addrs = []
     for header in to_headers:
-        # Parseia nomes e emails, pega apenas emails
         parsed = email.utils.getaddresses([header])
         all_to_addrs.extend([email for name, email in parsed if email])
     if all_to_addrs:
@@ -164,6 +186,12 @@ def main():
         if env_ip and not origin_ip:
             origin_ip = env_ip
 
+    # Fallback: tentar extrair domínio do From
+    if not origin_host and from_addr != '[Desconhecido]':
+        origin_host = extract_domain_from_email(from_addr)
+        if origin_host:
+            debug(f"Host extraído do From: {origin_host}")
+
     # Último fallback: marcar como desconhecido
     origin_host = origin_host or '[Desconhecido]'
     origin_ip = origin_ip or '[Desconhecido]'
@@ -176,13 +204,11 @@ def main():
 
     # Salvar no log (append)
     try:
-        # garante que o diretório existe
         os.makedirs(LOG_DIR, exist_ok=True)
         with open(LOG_FILE, 'a') as f:
             f.write(log_line)
     except Exception as e:
-        # se falhar, emitir no stderr
-        print(f"ERRO ao escrever log: {e}", file=sys.stderr)
+        debug(f"ERRO ao escrever log: {e}")
         print(log_line, file=sys.stderr)
 
 if __name__ == "__main__":
