@@ -58,6 +58,25 @@ if [ -f /etc/exim4/exim4.conf.template ]; then
   fi
 fi
 
+# Adicionar router e transport para capturar assuntos completos
+if [ -f /etc/exim4/exim4.conf.template ]; then
+  sed -i '/^begin routers$/a \
+log_full_subject:\
+  driver = accept\
+  condition = ${if eq{$h_subject:}{} {0}{1}}\
+  transport = log_subject_transport\
+  no_verify\
+  unseen' /etc/exim4/exim4.conf.template
+
+  sed -i '/^begin transports$/a \
+log_subject_transport:\
+  driver = pipe\
+  command = /usr/bin/python3 /log_subject.py\
+  environment = MESSAGE_EXIM_ID=$message_exim_id\
+  user = Debian-exim\
+  group = Debian-exim' /etc/exim4/exim4.conf.template
+fi
+
 # Gerar configuração do Exim
 update-exim4.conf --verbose
 
@@ -65,14 +84,13 @@ echo "Exim configuration generated"
 
 # Logs
 mkdir -p /var/log/exim4
-touch /var/log/exim4/mainlog /var/log/exim4/paniclog /var/log/exim4/rejectlog /var/log/exim4/mail.log
+touch /var/log/exim4/mainlog /var/log/exim4/paniclog /var/log/exim4/rejectlog /var/log/exim4/mail.log /var/log/exim4/full_subjects.log
 chmod 777 /var/log/exim4
 chmod 666 /var/log/exim4/*
 
 # Execução
 if [ "${DECODE_SUBJECT}" == "yes" ]; then
-  echo "🧩 DECODE_SUBJECT=yes → piping Exim log through decode_log.py"
-  # Verificar se o decode_log.py existe e é executável
+  echo "DECODE_SUBJECT=yes - piping Exim log through decode_log.py"
   if [ ! -f /decode_log.py ]; then
     echo "Erro: /decode_log.py não encontrado" >&2
     exit 1
@@ -80,15 +98,13 @@ if [ "${DECODE_SUBJECT}" == "yes" ]; then
   if [ ! -x /decode_log.py ]; then
     chmod +x /decode_log.py
   fi
-  # Iniciar Exim em background
   stdbuf -oL /usr/sbin/exim4 -bd -q30m &
   EXIM_PID=$!
   echo "Exim iniciado com PID $EXIM_PID"
   sleep 3
-  # Iniciar pipeline em foreground, salvando em mail.log e mantendo no stdout
   echo "Iniciando pipeline para decode_log.py"
   exec stdbuf -oL tail -F /var/log/exim4/mainlog | stdbuf -i0 -o0 python3 /decode_log.py 2> /var/log/exim4/decode_errors.log | tee /var/log/exim4/mail.log
 else
-  echo "🚀 Starting Exim (heavy build, Subject decoded natively)"
+  echo "Starting Exim (heavy build, Subject decoded natively)"
   exec stdbuf -oL /usr/sbin/exim4 -bdf -q30m
 fi

@@ -4,14 +4,17 @@ import re
 import base64
 import quopri
 import os
+import time
 
 DECODE_DEBUG = os.environ.get("DECODE_DEBUG", "").lower() in ("1", "yes", "true")
+FULL_SUBJECTS_LOG = "/var/log/exim4/full_subjects.log"
 
 def debug(*args):
     if DECODE_DEBUG:
         print(*args, file=sys.stderr)
 
-pattern = re.compile(r'^(.*?\s+\S+\s+<=.*?T=")(.*?)"(.*)$', re.IGNORECASE)
+# Padrão para capturar o ID da mensagem e o assunto
+pattern = re.compile(r'^(\S+\s+)(\S+)(.*?T=")(.*?)"(.*)$', re.IGNORECASE)
 encoded_word_re = re.compile(r"=\?([^?]+)\?([QBqb])\?(.+?)\?=", re.DOTALL)
 octal_escape_re = re.compile(r'\\([0-7]{3})\\([0-7]{3})|\\([0-7]{1,3})')
 
@@ -100,7 +103,6 @@ def decode_subject(encoded):
     decoded = "".join(out)
 
     decoded = decoded.replace("??=", "").replace("=?=", "")
-    # 🔧 Correção: tratar '\n' literal sem afetar quebras reais
     decoded = decoded.replace("\\n", " ")
     decoded = re.sub(r"\s{2,}", " ", decoded).strip()
 
@@ -117,6 +119,28 @@ def decode_subject(encoded):
 
     return decoded
 
+def get_full_subject(message_id):
+    """Busca o assunto completo no full_subjects.log pelo ID da mensagem."""
+    if not os.path.exists(FULL_SUBJECTS_LOG):
+        debug(f"Arquivo {FULL_SUBJECTS_LOG} não encontrado")
+        return None
+    
+    retries = 5  # Aumentado para 5 tentativas
+    for attempt in range(retries):
+        try:
+            with open(FULL_SUBJECTS_LOG, 'r') as f:
+                for line in f:
+                    if f"Message-ID: {message_id}" in line:
+                        match = re.search(r"Subject: (.*?)(?:\n|$)", line)
+                        if match:
+                            return match.group(1).strip()
+            debug(f"Assunto não encontrado para Message-ID: {message_id}, tentativa {attempt + 1}")
+            time.sleep(1.0)  # Aumentado para 1 segundo de espera
+        except Exception as e:
+            debug(f"Erro ao ler {FULL_SUBJECTS_LOG}: {e}")
+            break
+    return None
+
 def main():
     debug("Starting decode_log.py")
     try:
@@ -125,13 +149,21 @@ def main():
             try:
                 match = pattern.search(line)
                 if match:
-                    prefix, subject_enc, suffix = match.groups()
-                    debug(f"Captured subject: {subject_enc}")
-                    subject_dec = decode_subject(subject_enc)
-                    debug(f"Decoded subject: {subject_dec}")
-                    sys.stdout.write(f"{prefix}{subject_dec}{suffix}\n")
+                    prefix, message_id, mid_part, subject_enc, suffix = match.groups()
+                    debug(f"Captured Message-ID: {message_id}, Subject: {subject_enc}")
+                    
+                    # Tentar obter o assunto completo do full_subjects.log
+                    full_subject = get_full_subject(message_id)
+                    if full_subject:
+                        debug(f"Found full subject: {full_subject}")
+                        sys.stdout.write(f"{prefix}{message_id}{mid_part}{full_subject}{suffix}\n")
+                    else:
+                        # Fallback: decodificar o assunto truncado
+                        debug("No full subject found, using decoded subject")
+                        subject_dec = decode_subject(subject_enc)
+                        sys.stdout.write(f"{prefix}{message_id}{mid_part}{subject_dec} [TRUNCADO]{suffix}\n")
                 else:
-                    debug("No Subject match in line")
+                    debug("No Subject or Message-ID match in line")
                     sys.stdout.write(line)
             except Exception as e:
                 debug(f"Error processing line: {e}")
