@@ -11,6 +11,10 @@ Principais recursos:
 - Configuração flexível via variáveis de ambiente.
 - Logs decodificados salvos em `/var/log/exim4/mail.log`.
 - Suporte a restrição de redes de origem para relay (via `dc_relay_nets`).
+- Suporte a envio direto (sem relay externo) ou relay autenticado.
+- Assinatura DKIM com geração automática de chaves para domínios permitidos (opcional para envio direto).
+- Restrição de domínios remetentes permitidos (opcional para envio direto).
+- Configuração de protocolo de rede (IPv4 ou all, opcional para envio direto).
 
 Este projeto é ideal para aprender sobre configuração de e-mail no Linux, Docker e Exim4.
 
@@ -18,7 +22,7 @@ Este projeto é ideal para aprender sobre configuração de e-mail no Linux, Doc
 
 - Docker instalado (versão 20+ recomendada).
 - Docker Compose instalado (versão 2+ recomendada).
-- Acesso a um servidor SMTP externo (ex.: Gmail SMTP relay) com credenciais de autenticação.
+- Acesso a um servidor SMTP externo (ex.: Gmail SMTP relay) com credenciais de autenticação (opcional para envio direto).
 - Conhecimento básico de Docker e variáveis de ambiente.
 
 ## Instalação
@@ -59,32 +63,41 @@ services:
     image: aprendendolinux/exim-relay:latest  # Imagem pré-construída no Docker Hub
     container_name: exim-relay  # Nome do contêiner para fácil identificação
     environment:
-      - SMTP_SERVER=smtp-relay.gmail.com  # Servidor SMTP externo para relay (ex.: smtp-relay.gmail.com para Gmail)
-      - SMTP_PORT=587  # Porta do servidor SMTP (587 para TLS/STARTTLS, 465 para SSL)
-      - SMTP_USERNAME=[your-username]  # Usuário para autenticação SMTP (ex.: seu email)
-      - SMTP_PASSWORD=[your-password]  # Senha para autenticação SMTP (use app password se for Gmail com 2FA)
+      - SMTP_SERVER=  # Deixe vazio para envio direto ou especifique relay (ex.: smtp-relay.gmail.com)
+      - SMTP_PORT=25  # Porta do servidor SMTP (25 para envio direto, 587 para TLS/STARTTLS, 465 para SSL)
+      - SMTP_USERNAME=  # Usuário para autenticação SMTP (opcional para envio direto, ex.: seu email)
+      - SMTP_PASSWORD=  # Senha para autenticação SMTP (opcional para envio direto, use app password para Gmail com 2FA)
       - SERVER_HOSTNAME=[your-hostname]  # Nome do host do servidor (FQDN usado para qualificação de domínio no Exim)
       - TZ=America/Sao_Paulo  # Fuso horário do contêiner (ex.: America/Sao_Paulo para horário de Brasília)
       - DECODE_SUBJECT=yes  # Ativa decodificação de assuntos nos logs (yes/no)
       - DECODE_DEBUG=yes  # Ativa modo debug no decode_log.py (yes/no, exibe detalhes de decodificação)
       - RELAY_NETS=0.0.0.0/0  # Redes permitidas para relay (ex.: 172.16.0.0/12;192.168.0.0/16 para redes específicas; 0.0.0.0/0 para qualquer origem)
+      - ALLOWED_SENDER_DOMAINS=  # Domínios de remetentes permitidos (opcional para relay autenticado, espaço-separados)
+      - DKIM_SELECTOR=mail  # Selector DKIM (opcional para relay autenticado, padrão: mail)
+      - DKIM_AUTOGENERATE=no  # Gera chaves DKIM automáticas se não existirem (opcional para relay autenticado, yes/no)
+      - EXIM_INET_PROTOCOLS=all  # Protocolo de rede: ipv4 ou all (opcional para relay autenticado)
     volumes:
       - /srv/exim/logs:/var/log/exim4  # Monta diretório local para persistir logs (ex.: ./logs:/var/log/exim4)
+      - /srv/exim/dkim:/etc/opendkim/keys  # Monta diretório para chaves DKIM (similar ao postfix)
     restart: unless-stopped  # Política de restart (reinicia automaticamente, exceto se parado manualmente)
     ports:
       - 25:25  # Expõe a porta 25 do contêiner para conexões SMTP externas
 ```
 
 ### Variáveis explicadas
-- `SMTP_SERVER`: Endereço do servidor SMTP externo para relay (ex.: `smtp-relay.gmail.com`).
-- `SMTP_PORT`: Porta para conexão SMTP. Use `587` para STARTTLS (recomendado) ou `465` para SSL.
-- `SMTP_USERNAME`: Usuário para autenticação SMTP. Para Gmail, use o e-mail ou um app-specific username.
-- `SMTP_PASSWORD`: Senha ou app password (necessário para contas com autenticação de dois fatores).
+- `SMTP_SERVER`: Endereço do servidor SMTP externo para relay (ex.: `smtp-relay.gmail.com`). Deixe vazio para envio direto.
+- `SMTP_PORT`: Porta para conexão SMTP. Use `587` para STARTTLS (recomendado) ou `465` para SSL. Para envio direto, use `25`.
+- `SMTP_USERNAME`: Usuário para autenticação SMTP. Para Gmail, use o e-mail ou um app-specific username (opcional para envio direto).
+- `SMTP_PASSWORD`: Senha ou app password (necessário para contas com autenticação de dois fatores; opcional para envio direto).
 - `SERVER_HOSTNAME`: Nome do host (FQDN) usado pelo Exim para qualificar domínios. Exemplo: `mail.suaempresa.com`.
 - `TZ`: Fuso horário do contêiner, para timestamps corretos nos logs (ex.: `America/Sao_Paulo`).
 - `DECODE_SUBJECT`: Ativa o script `decode_log.py` para decodificar assuntos MIME/octais nos logs (`yes` para ativar, `no` para desativar).
 - `DECODE_DEBUG`: Ativa logs detalhados no `decode_log.py` (`yes` para exibir detalhes no `/var/log/exim4/decode_errors.log`).
 - `RELAY_NETS`: Redes ou IPs permitidos para relay, no formato Exim (ex.: `172.16.0.0/12;192.168.0.0/16` para múltiplas redes; `0.0.0.0/0` para qualquer origem). Separe múltiplas redes com `;` (sem espaços).
+- `ALLOWED_SENDER_DOMAINS`: Domínios permitidos para remetentes (espaço-separados; opcional para relay autenticado). Se definido, o Exim rejeita envios de domínios não listados.
+- `DKIM_SELECTOR`: Seletor DKIM para chaves geradas (padrão: `mail`; opcional para relay autenticado).
+- `DKIM_AUTOGENERATE`: Ativa a geração automática de chaves DKIM para domínios permitidos (`yes` para ativar, `no` para desativar; opcional para relay autenticado).
+- `EXIM_INET_PROTOCOLS`: Protocolo de rede para envio direto (`ipv4` para apenas IPv4, `all` para IPv4 e IPv6; opcional para relay autenticado).
 
 Após alterar o `docker-compose.yml`, reinicie o contêiner:
 ```bash
@@ -114,7 +127,7 @@ docker-compose up -d
      ```bash
      docker exec exim-relay cat /var/log/exim4/decode_errors.log
      ```
-   - **Rejeições**: `/var/log/exim4/rejectlog` registra tentativas de conexão rejeitadas (ex.: falta de autenticação).
+   - **Rejeições**: `/var/log/exim4/rejectlog` registra tentativas de conexão rejeitadas (ex.: falta de autenticação ou domínios não permitidos).
      ```bash
      docker exec exim-relay cat /var/log/exim4/rejectlog
      ```
@@ -201,7 +214,7 @@ Se você precisar personalizar a configuração:
     docker exec exim-relay cat /var/log/exim4/mail.log
     ```
 - **Erro "Network is unreachable"**:
-  - Ocorre devido a tentativas de conexão IPv6. A configuração `POSTFIX_INET_PROTOCOLS=ipv4` já mitiga isso. Confirme no `docker-compose.yml`.
+  - Ocorre devido a tentativas de conexão IPv6. A configuração `EXIM_INET_PROTOCOLS=ipv4` já mitiga isso. Confirme no `docker-compose.yml`.
 - **Erro "TLS error on connection"**:
   - Pode ocorrer em conexões instáveis com o servidor SMTP externo. Verifique a conectividade de rede e as credenciais.
 - **Conexões rejeitadas**:

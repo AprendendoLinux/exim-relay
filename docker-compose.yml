@@ -3,17 +3,22 @@ services:
     image: aprendendolinux/exim-relay:latest  # Imagem pré-construída no Docker Hub
     container_name: exim-relay  # Nome do contêiner para fácil identificação
     environment:
-      - SMTP_SERVER=smtp-relay.gmail.com  # Servidor SMTP externo para relay (ex.: smtp-relay.gmail.com para Gmail)
-      - SMTP_PORT=587  # Porta do servidor SMTP (587 para TLS/STARTTLS, 465 para SSL)
-      - SMTP_USERNAME=[your-username]  # Usuário para autenticação SMTP (ex.: seu email)
-      - SMTP_PASSWORD=[your-password]  # Senha para autenticação SMTP (use app password se for Gmail com 2FA)
+      - SMTP_SERVER=smtp-relay.gmail.com  # Deixe vazio para envio direto ou especifique relay (ex.: smtp-relay.gmail.com)
+      - SMTP_PORT=587  # Porta do servidor SMTP (25 para envio direto, 587 para TLS/STARTTLS, 465 para SSL)
+      - SMTP_USERNAME=[your-username]  # Usuário para autenticação SMTP (opcional para envio direto, ex.: seu email)
+      - SMTP_PASSWORD=[your-password]  # Senha para autenticação SMTP (opcional para envio direto, use app password para Gmail com 2FA)
       - SERVER_HOSTNAME=[your-hostname]  # Nome do host do servidor (FQDN usado para qualificação de domínio no Exim)
       - TZ=America/Sao_Paulo  # Fuso horário do contêiner (ex.: America/Sao_Paulo para horário de Brasília)
       - DECODE_SUBJECT=yes  # Ativa decodificação de assuntos nos logs (yes/no)
       - DECODE_DEBUG=yes  # Ativa modo debug no decode_log.py (yes/no, exibe detalhes de decodificação)
       - RELAY_NETS=0.0.0.0/0  # Redes permitidas para relay (ex.: 172.16.0.0/12;192.168.0.0/16 para redes específicas; 0.0.0.0/0 para qualquer origem)
+      - ALLOWED_SENDER_DOMAINS=  # Domínios de remetentes permitidos (opcional para relay autenticado, espaço-separados)
+      - DKIM_SELECTOR=mail  # Selector DKIM (opcional para relay autenticado, padrão: mail)
+      - DKIM_AUTOGENERATE=no  # Gera chaves DKIM automáticas se não existirem (opcional para relay autenticado, yes/no)
+      - EXIM_INET_PROTOCOLS=all  # Protocolo de rede: ipv4 ou all (opcional para relay autenticado)
     volumes:
       - /srv/exim/logs:/var/log/exim4  # Monta diretório local para persistir logs (ex.: ./logs:/var/log/exim4)
-    restart: unless-stopped  # Política de restart (reinicia automaticamente, exceto se parado manualmente)
+      - /srv/postfixdkim:/etc/opendkim/keys  # Monta diretório para chaves DKIM (similar ao postfix)
+    restart: always  # Política de restart (reinicia automaticamente, exceto se parado manualmente)
     ports:
       - 25:25  # Expõe a porta 25 do contêiner para conexões SMTP externas
