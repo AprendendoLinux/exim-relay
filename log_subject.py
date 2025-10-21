@@ -18,7 +18,10 @@ DEBUG_LOG = os.path.join(LOG_DIR, "decode_errors.log")
 # Variável de debug
 DECODE_DEBUG = os.environ.get("DECODE_DEBUG", "").lower() in ("1", "yes", "true")
 
+# Regex para IPv4 e IPv6
 IPV4_RE = re.compile(r'\b(\d{1,3}(?:\.\d{1,3}){3})\b')
+IPV6_RE = re.compile(r'\[([0-9a-fA-F:]+(?:\:[0-9a-fA-F:]+)*)\]')  # Captura IPv6 entre colchetes
+
 # Tenta extrair host de vários padrões: "from <host>", "H=(<host>)", "helo=<host>", "EHLO <host>", "by <server> from <host>"
 HOST_FROM_RE = re.compile(
     r'(?:from\s+([^\s\(\;]+)|H=\(([^)]+)\)|helo=([^\s;]+)|EHLO\s+([^\s;]+)|by\s+[^\s]+\s+from\s+([^\s;]+))',
@@ -72,16 +75,21 @@ def parse_received_for_origin(msg):
     for header in reversed(received_headers):
         header = header.replace('\n', ' ')  # Evita quebras
         debug(f"Analisando Received: {header}")
-        ip_match = IPV4_RE.search(header)
-        host_match = HOST_FROM_RE.search(header)
+
+        # Tenta IPv6 primeiro (entre colchetes)
+        ip_match = IPV6_RE.search(header)
+        if not ip_match:
+            ip_match = IPV4_RE.search(header)
         ip = ip_match.group(1) if ip_match else None
+
+        host_match = HOST_FROM_RE.search(header)
         host = None
         if host_match:
             # Captura o primeiro grupo não nulo: from, H=, helo=, EHLO, ou by...from
             host_candidate = next((g for g in host_match.groups() if g), None)
             if host_candidate:
                 host_candidate = host_candidate.strip('[];(),')
-                if not IPV4_RE.match(host_candidate):
+                if not IPV4_RE.match(host_candidate) and not IPV6_RE.match(f'[{host_candidate}]'):
                     host = host_candidate
                     debug(f"Host encontrado: {host}")
 
@@ -119,7 +127,10 @@ def get_env_origin():
     for v in env_vars_ip:
         val = os.environ.get(v)
         if val:
-            ip_match = IPV4_RE.search(val)
+            # Tenta IPv6 entre colchetes primeiro
+            ip_match = IPV6_RE.search(val)
+            if not ip_match:
+                ip_match = IPV4_RE.search(val)
             ip = ip_match.group(1) if ip_match else val.strip().replace('\n', ' ')
             debug(f"IP encontrado em variável de ambiente {v}: {ip}")
             break
