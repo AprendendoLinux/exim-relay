@@ -1,6 +1,6 @@
 # Exim-Relay: Um Relay SMTP Simples com Docker e Exim4
 
-## Descrição - Meu pau na sua mão
+## Descrição
 
 Este repositório fornece uma configuração Docker para um relay SMTP usando o Exim4, um servidor de e-mail leve e flexível. O objetivo é criar um contêiner que atue como um relay para enviar e-mails através de um servidor SMTP externo (como o Gmail ou outro provedor), com suporte a decodificação de assuntos (subjects) codificados nos logs para facilitar a depuração. Isso é útil para ambientes de desenvolvimento, testes ou aplicações que precisam enviar e-mails sem configurar um servidor SMTP completo.
 
